@@ -27,8 +27,8 @@ titlechar='ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789-';
 %% ============ 构造training set特征矩阵 ===================================
 
 %空特征矩阵
-stimulusdata=[];
-stimulusy=[];
+filedata={};
+filey={};
 %读取所有样本（11次run中每次trail）的特征矩阵
 for filesnumber=1:11
     load( files{ filesnumber } );
@@ -37,107 +37,109 @@ for filesnumber=1:11
 
     starttrial=min(trialnr)+1;    % intensification to start is the first intensification
     endtrial=max(trialnr);        % the last intensification is the last one for the last character
-
+        
     %构造特征矩阵
     % go through all intensifications and calculate classification results after each
     fprintf(1, 'Going through all intensifications in %d \n',filesnumber);
+    trialdata=zeros((endtrial-starttrial+1),(length(channelselect)*triallength)); %构造矩阵，用于存放每次trail中144*10个特征数据
+    trialy=zeros((endtrial-starttrial+1),1);
     for cur_trial=starttrial:endtrial
         % get the indeces of the samples of the current intensification
         trialidx=find(trialnr == cur_trial);
         % get the data for these samples (i.e., starting at time of stimulation and triallength samples
-        trialdata=signal(min(trialidx):min(trialidx)+triallength-1, :);
-        trialdata=trialdata(:,channelselect);%选择通道
-        trialdata=trialdata(:)'; %构造行式特征向量(1X1440)
-        stimulusdata=[stimulusdata;trialdata];  %构造特征矩阵
-        stimulusy = [stimulusy;StimulusType(min(trialidx))];
+        signaldata=signal(min(trialidx):min(trialidx)+triallength-1, channelselect);
+        signaldata=signaldata(:)';
+        trialdata(cur_trial-starttrial+1,:)=signaldata;
+        trialy(cur_trial-starttrial+1)=StimulusType(min(trialidx));
     end % session
+    filedata{filesnumber}=trialdata;  %构造特征矩阵
+    filey{filesnumber} = trialy;
 end
 
+%合并各文件数据
+traindata=cat(1,filedata{:});
+trainy=cat(1,filey{:});
 %从0样本中选取适量训练样本，零一样本比为1.
-oddidx = find(stimulusy == 1);
-disoddidx = find(stimulusy == 0);
-[stimulusdata,mu,sigma] = featureNormalize(stimulusdata);%归一化
+oddidx = find(trainy == 1);
+disoddidx = find(trainy == 0);
 disoddidxRandSelect = disoddidx(randperm(length(disoddidx),1*length(oddidx)));%从0样本中选取适量训练样本，零一样本比为1.
-train_data = stimulusdata([oddidx;disoddidxRandSelect],:);%训练数据
-train_y = stimulusy([oddidx;disoddidxRandSelect],:);
-stimulusdata = train_data;
-stimulusy = train_y;
+traindata = traindata([oddidx;disoddidxRandSelect],:);%训练数据
+trainy = trainy([oddidx;disoddidxRandSelect],:);
+
+
+%% ============ 读取test set 数据 ===================================
+%空特征矩阵
+filedata={};
+fileCode={};
+%读取所有样本（11次run中每次trail）的特征矩阵
+for filesnumber=12:19
+    load( files{ filesnumber } );
+% 0.1-20Hz bandpass filter on the signal
+    signal = passband_filter(signal);
+
+    starttrial=min(trialnr)+1;    % intensification to start is the first intensification
+    endtrial=max(trialnr);        % the last intensification is the last one for the last character
+        
+    %构造特征矩阵
+    % go through all intensifications and calculate classification results after each
+    fprintf(1, 'Going through all intensifications in %d \n',filesnumber);
+    trialdata=zeros((endtrial-starttrial+1),(length(channelselect)*triallength)); %构造矩阵，用于存放每次trail中144*10个特征数据
+    trialy=zeros((endtrial-starttrial+1),1);
+    for cur_trial=starttrial:endtrial
+        % get the indeces of the samples of the current intensification
+        trialidx=find(trialnr == cur_trial);
+        % get the data for these samples (i.e., starting at time of stimulation and triallength samples
+        signaldata=signal(min(trialidx):min(trialidx)+triallength-1, channelselect);
+        signaldata=signaldata(:)';
+        trialdata(cur_trial-starttrial+1,:)=signaldata;
+        trialy(cur_trial-starttrial+1,:)=StimulusCode(min(trialidx));
+    end % session
+    filedata{filesnumber-12+1}=trialdata;  %构造特征矩阵
+    fileCode{filesnumber-12+1} = trialy;
+end
+
+%合并各文件数据
+testdata=cat(1,filedata{:});
+testCode=cat(1,fileCode{:});
+
+%% ============ 采用PCA降维 ===================================
+[train_pca,test_pca] = pcaForSVM(traindata,testdata);
+
+%% ============ 归一化train_pca,test_pca ===================================
+[train_pca, mu, sigma] = featureNormalize(train_pca);
+test_pca = bsxfun(@minus, test_pca, mu);
+test_pca = bsxfun(@rdivide, test_pca, sigma);
 
 %% ============ 寻找SVM参数C,g(K-fold CV) ===================================
 % fprintf(1, '寻找最优C,g参数\n');
 % C = 0;
 % g = 0;
-% [bestCVaccuracy,C,g] = SVMcgForClass(stimulusy,stimulusdata);
+% [bestCVaccuracy,C,g] = SVMcgForClass(trainy,train_pca);
 % fprintf(1, '寻参完成\n');
 
 %% ============ 训练SVM ===================================
-model = svmtrain(stimulusy,stimulusdata,'-s 0 -t 2 -c 1.7411 -g 0.0039');
+model = svmtrain(trainy,train_pca,'-s 0 -t 2 -c 0.0625 -g 0.0206');
 fprintf(1, 'SVM训练完成\n');
 
-%% ============ 读取test set(SESSION 12)数据并判断字符===================================
-
-%读取session12各个run的特征矩阵
-for filesnumber=12:19
-    load( files{ filesnumber } );
-    % 0.1-20Hz bandpass filter on the signal
-    signal = passband_filter(signal);
-    % get a list of the samples that divide one character from the other
-    idx=find(PhaseInSequence == 3);                                % get all samples where PhaseInSequence == 3 (end period after one character)
-    charsamples=idx(find(PhaseInSequence(idx(1:end-1)+1) == 1));   % get exactly the samples at which the trials end (i.e., the ones where the next value of PhaseInSequence equals 1 (starting period of next character))
-    %防止有的3到1，trailnr==0
-    selectcharsamples=[];
-    for ct=1:(length(charsamples))
-        if(trialnr(charsamples(ct))~=0)
-            selectcharsamples=[selectcharsamples,ct];
-        end
-    end
-    charsamples=charsamples(selectcharsamples,:);
-    charsamples=[1;charsamples];
-    
-    %逐个字符判断
-    predictchar='';
-    for cs=1:(length(charsamples)-1)
-        %空特征矩阵
-        testdata=[];
-        testCode=[];
-        % this determines the first and last intensification to be used here
-    	% in this example, this results in evaluation of intensification 1...180 (180 = 15 sequences x 12 stimuli)
-        starttrial=trialnr(charsamples(cs))+1;                                     % intensification to start is the first intensification
-        endtrial=max(trialnr(find(samplenr < charsamples(cs+1))));         % the last intensification is the last one for the first character
-
-        %构造特征矩阵
-        % go through all intensifications and calculate classification results after each
-        fprintf(1, 'Going through all intensifications in %d \n',filesnumber);
-        for cur_trial=starttrial:endtrial
-            % get the indeces of the samples of the current intensification
-            trialidx=find(trialnr == cur_trial);
-            % get the data for these samples (i.e., starting at time of stimulation and triallength samples
-            trialdata=signal(min(trialidx):min(trialidx)+triallength-1, :);
-            trialdata=trialdata(:,channelselect);%选择通道
-            trialdata=trialdata(:)'; %构造行式特征向量(1X1440)
-            testdata=[testdata;trialdata];  %构造特征矩阵
-            testCode=[testCode;StimulusCode(min(trialidx))];
-        end % session
-        %归一化，用训练样本的mu和sigma
-        testdata = bsxfun(@minus, testdata, mu);
-        testdata = bsxfun(@rdivide, testdata, sigma);
-        %对归一化之后的数据进行分类
-        testlabel = zeros(size(testdata,1),1);
-        testlabel = svmpredict(testlabel,testdata,model);
-        %哪一行，哪一列的1标签多，则判断结果为该行，该列
-        sumlabel = zeros(6,1);
-        for Code=1:6
-            sumlabel(Code)=sum(testlabel(find(testCode==Code)));
-        end
-        [~,targetcolumn] = max(sumlabel);
-        for Code=7:12
-            sumlabel(Code-6)=sum(testlabel(find(testCode==Code)));
-        end
-        [~,targetrow] = max(sumlabel);
-        predictchar(cs)=titlechar((targetrow-1)*6+targetcolumn);
-    end
-    fprintf(1, predictchar);%输出预测单词
-    fprintf(1, '\n'); %输出下个单词前换行
+%% ============ 逐字符预测(每180个trial) ===================================
+predictchar='';
+for charnum=1:(size(test_pca,1)/180)
+    testlabel=zeros(180,1);
+    testlabel=svmpredict(testlabel,test_pca(((charnum-1)*180+1):(charnum*180),:),model);
+     %哪一行，哪一列的1标签多，则判断结果为该行，该列
+     sumlabel = zeros(6,1);
+     for Code=1:6
+        sumlabel(Code)=sum(testlabel(find(testCode(((charnum-1)*180+1):(charnum*180),:)==Code)));
+     end
+     [~,targetcolumn] = max(sumlabel);
+     for Code=7:12
+        sumlabel(Code-6)=sum(testlabel(find(testCode(((charnum-1)*180+1):(charnum*180),:)==Code)));
+     end
+     [~,targetrow] = max(sumlabel);
+     predictchar(charnum)=titlechar((targetrow-1)*6+targetcolumn);
 end
+fprintf(1,predictchar);
+fprintf(1,'\n结果推算完成\n');
+
 
 
