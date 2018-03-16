@@ -59,7 +59,7 @@ end
 %合并各文件数据
 traindata=cat(1,filedata{:});
 trainy=cat(1,filey{:});
-%从0样本中选取适量训练样本，零一样本比为1.
+%% ============ 从0样本中选取适量训练样本，零一样本比为1. ===================================
 oddidx = find(trainy == 1);
 disoddidx = find(trainy == 0);
 disoddidxRandSelect = disoddidx(randperm(length(disoddidx),1*length(oddidx)));%从0样本中选取适量训练样本，零一样本比为1.
@@ -103,14 +103,36 @@ testdata=cat(1,filedata{:});
 testCode=cat(1,fileCode{:});
 
 %% ============ 采用PCA降维 ===================================
-[train_pca,test_pca] = pcaForSVM(traindata,testdata);
+[train_scale,test_scale]=scaleForSVM(traindata,testdata);%先归一
+[train_pca,test_pca] = pcaForSVM(train_scale,test_scale);
 
-%% ============ 归一化train_pca,test_pca ===================================
-[train_pca, mu, sigma] = featureNormalize(train_pca);
-test_pca = bsxfun(@minus, test_pca, mu);
-test_pca = bsxfun(@rdivide, test_pca, sigma);
+% %% ============ 采用learning Curve ===================================
+% X = train_pca(1:1800,:);
+% y = trainy(1:1800,:);
+% Xval = train_pca(1800:end,:);
+% yval = trainy(1800:end,:);
+% lambda = 1;
+% [error_train, error_val] = ...
+% learningCurve([ones(size(X, 1), 1) X], y, ...
+%                   [ones(size(Xval, 1), 1) Xval], yval, ...
+%                   lambda);
+% 
+% plot(1:size(X, 1), error_train, 1:size(X, 1), error_val);
+% title('Learning curve for linear regression')
+% legend('Train', 'Cross Validation')
+% xlabel('Number of training examples')
+% ylabel('Error')
+% axis([0 1800 0 150])
+% 
+% fprintf('# Training Examples\tTrain Error\tCross Validation Error\n');
+% for i = 1:size(X, 1)
+%     fprintf('  \t%d\t\t%f\t%f\n', i, error_train(i), error_val(i));
+% end
+% 
+% fprintf('Program paused. Press enter to continue.\n');
+% pause;
 
-%% ============ 寻找SVM参数C,g(K-fold CV) ===================================
+% % ============ 寻找SVM参数C,g(K-fold CV) ===================================
 % fprintf(1, '寻找最优C,g参数\n');
 % C = 0;
 % g = 0;
@@ -118,7 +140,7 @@ test_pca = bsxfun(@rdivide, test_pca, sigma);
 % fprintf(1, '寻参完成\n');
 
 %% ============ 训练SVM ===================================
-model = svmtrain(trainy,train_pca,'-s 0 -t 2 -c 0.0625 -g 0.0206');
+model = svmtrain(trainy,train_pca,'-s 0 -t 2 -c 1.7411 -g 0.0039');
 fprintf(1, 'SVM训练完成\n');
 
 %% ============ 逐字符预测(每180个trial) ===================================
